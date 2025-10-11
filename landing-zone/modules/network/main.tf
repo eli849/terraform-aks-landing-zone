@@ -1,0 +1,29 @@
+resource "azurerm_virtual_network" "vnet" {
+  name                = "${var.rg_name}-vnet"
+  address_space       = var.vnet_cidr
+  location            = var.location
+  resource_group_name = var.rg_name
+}
+
+resource "azurerm_subnet" "subnet" {
+  name                 = "${var.rg_name}-subnet"
+  resource_group_name  = var.rg_name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = var.subnet_cidr
+}
+
+output "vnet_id" {
+  value = azurerm_virtual_network.vnet.id
+}
+
+output "subnet_id" {
+  value = azurerm_subnet.subnet.id
+}
+
+output "rg_name" {
+  value = var.rg_name
+}
+
+output "rg_id" {
+  value = ""
+}
