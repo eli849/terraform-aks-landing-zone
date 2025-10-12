@@ -37,6 +37,19 @@ module "aks" {
   sp_secret      = module.service_principal.password
 }
 
+module "acr" {
+  source              = "./modules/acr"
+  acr_name            = "myacr"                            # Replace with your desired ACR name (must be globally unique)
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  acr_sku             = "Basic"
+  admin_enabled       = true
+  tags                = {
+    environment = "dev"
+    project     = "landing-zone"
+  }
+}
+
 resource "random_password" "grafana_admin" {
   length  = 16
   special = true

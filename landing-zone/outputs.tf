@@ -15,3 +15,13 @@ output "aks_cluster_name" {
   value       = module.aks.cluster_name
   description = "AKS cluster name"
 }
+
+output "acr_name" {
+  value       = module.acr.name
+  description = "Azure Container Registry name"
+}
+
+output "acr_login_server" {
+  value       = module.acr.login_server
+  description = "Azure Container Registry login server"
+}
