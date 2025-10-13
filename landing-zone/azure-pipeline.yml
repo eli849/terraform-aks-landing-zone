@@ -58,29 +58,30 @@ stages:
   dependsOn: terraform
   condition: succeeded()
   jobs:
-    - job: apply
+    - deployment: apply
       displayName: 'Terraform Apply'
-      environment: 'infra-approval'  # Requires manual approval
-      pool:
-        vmImage: 'ubuntu-latest'
-      steps:
-        - download: current
-          artifact: terraformPlan
-          displayName: 'Download Terraform Plan'
+      environment: 'infra-approval'  # ✅ Triggers manual approval if configured
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - download: current
+                artifact: terraformPlan
+                displayName: 'Download Terraform Plan'
 
-        - task: TerraformInstaller@1
-          inputs:
-            terraformVersion: '1.6.0'
+              - task: TerraformInstaller@1
+                inputs:
+                  terraformVersion: '1.6.0'
 
-        - checkout: self
+              - checkout: self
 
-        - script: terraform init
-          workingDirectory: landing-zone
-          displayName: 'Terraform Init'
+              - script: terraform init
+                workingDirectory: landing-zone
+                displayName: 'Terraform Init'
 
-        - script: terraform apply -auto-approve tfplan.out
-          workingDirectory: landing-zone
-          displayName: 'Terraform Apply'
+              - script: terraform apply -auto-approve tfplan.out
+                workingDirectory: landing-zone
+                displayName: 'Terraform Apply'
 
 
 # ===============================
