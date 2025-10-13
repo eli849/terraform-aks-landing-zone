@@ -27,11 +27,10 @@ stages:
       pool:
         vmImage: 'ubuntu-latest'
       steps:
-        - task: TerraformInstaller@1
-          inputs:
-            terraformVersion: '1.6.0'
-
         - checkout: self
+
+        - script: terraform version
+          displayName: 'Check Terraform Version'
 
         - script: terraform init
           workingDirectory: landing-zone
@@ -49,7 +48,6 @@ stages:
           artifact: terraformPlan
           displayName: 'Publish Terraform Plan Artifact'
 
-
 # ===============================
 # 2. CD: Terraform Apply (Manual Approval)
 # ===============================
@@ -60,7 +58,7 @@ stages:
   jobs:
     - deployment: apply
       displayName: 'Terraform Apply'
-      environment: 'infra-approval'  # ✅ Triggers manual approval if configured
+      environment: 'infra-approval'  # Requires manual approval (must be created in Azure DevOps UI)
       strategy:
         runOnce:
           deploy:
@@ -69,11 +67,10 @@ stages:
                 artifact: terraformPlan
                 displayName: 'Download Terraform Plan'
 
-              - task: TerraformInstaller@1
-                inputs:
-                  terraformVersion: '1.6.0'
-
               - checkout: self
+
+              - script: terraform version
+                displayName: 'Check Terraform Version'
 
               - script: terraform init
                 workingDirectory: landing-zone
@@ -82,7 +79,6 @@ stages:
               - script: terraform apply -auto-approve tfplan.out
                 workingDirectory: landing-zone
                 displayName: 'Terraform Apply'
-
 
 # ===============================
 # 3. CI: Build and Push Docker Image
@@ -108,7 +104,6 @@ stages:
               docker build -t $(containerRegistry)/$(imageName):$(Build.BuildId) .
               docker push $(containerRegistry)/$(imageName):$(Build.BuildId)
 
-
 # ===============================
 # 4. CD: Deploy to AKS using Helm
 # ===============================
@@ -118,7 +113,7 @@ stages:
   jobs:
     - deployment: helmDeploy
       displayName: 'Helm Deploy'
-      environment: 'aks-dev'
+      environment: 'aks-dev'  # Auto-created on first use if not already existing
       strategy:
         runOnce:
           deploy:
@@ -139,7 +134,6 @@ stages:
                     helm upgrade --install $(helmReleaseName) $(helmChartPath) \
                       --set image.repository=$(containerRegistry)/$(imageName) \
                       --set image.tag=$(Build.BuildId)
-
 
 # ===============================
 # 5. CD: Post-deploy Monitoring Check
