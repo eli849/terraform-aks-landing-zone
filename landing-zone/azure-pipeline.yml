@@ -7,7 +7,8 @@ variables:
   azureSubscription: 'azureServiceConnection'   # Azure DevOps service connection name
   aksClusterName: 'aks-cluster'
   aksResourceGroup: 'rg-landing-zone'
-  containerRegistry: 'myacr.azurecr.io'         # Replace with your ACR login server
+  acrName: 'myacr'
+  containerRegistry: 'myacr.azurecr.io'
   imageName: 'myapp'
   helmReleaseName: 'myapp'
   helmChartPath: './helm/myapp-chart'
@@ -33,15 +34,18 @@ stages:
         - checkout: self
 
         - script: terraform init
+          workingDirectory: landing-zone
           displayName: 'Terraform Init'
 
         - script: terraform validate
+          workingDirectory: landing-zone
           displayName: 'Terraform Validate'
 
-        - script: terraform plan -out=tfplan
+        - script: terraform plan -out=tfplan.out
+          workingDirectory: landing-zone
           displayName: 'Terraform Plan'
 
-        - publish: tfplan
+        - publish: landing-zone/tfplan.out
           artifact: terraformPlan
           displayName: 'Publish Terraform Plan Artifact'
 
@@ -56,6 +60,7 @@ stages:
   jobs:
     - job: apply
       displayName: 'Terraform Apply'
+      environment: 'infra-approval'  # Requires manual approval
       pool:
         vmImage: 'ubuntu-latest'
       steps:
@@ -70,9 +75,11 @@ stages:
         - checkout: self
 
         - script: terraform init
+          workingDirectory: landing-zone
           displayName: 'Terraform Init'
 
-        - script: terraform apply -auto-approve tfplan
+        - script: terraform apply -auto-approve tfplan.out
+          workingDirectory: landing-zone
           displayName: 'Terraform Apply'
 
 
@@ -97,7 +104,6 @@ stages:
             scriptType: 'bash'
             scriptLocation: 'inlineScript'
             inlineScript: |
-              az acr login --name $(containerRegistry)
               docker build -t $(containerRegistry)/$(imageName):$(Build.BuildId) .
               docker push $(containerRegistry)/$(imageName):$(Build.BuildId)
 
@@ -128,6 +134,7 @@ stages:
                     az aks get-credentials --name $(aksClusterName) --resource-group $(aksResourceGroup) --overwrite-existing
 
                     echo "Deploying with Helm..."
+                    helm lint $(helmChartPath)
                     helm upgrade --install $(helmReleaseName) $(helmChartPath) \
                       --set image.repository=$(containerRegistry)/$(imageName) \
                       --set image.tag=$(Build.BuildId)
@@ -157,3 +164,9 @@ stages:
 
               kubectl get pods -n default | grep prometheus
               kubectl get pods -n default | grep grafana
+              if [ $? -ne 0 ]; then
+                echo "Prometheus or Grafana pods are not running!"
+                exit 1
+              else
+                echo "Prometheus and Grafana pods are running successfully."
+              fi
