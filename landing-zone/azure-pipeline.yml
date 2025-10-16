@@ -4,7 +4,7 @@ trigger:
       - main
 
 variables:
-  azureSubscription: 'azureServiceConnection'   # Azure DevOps service connection name
+  azureSubscription: 'azureServiceConnection'
   aksClusterName: 'aks-cluster'
   aksResourceGroup: 'rg-landing-zone'
   acrName: 'myacr'
@@ -37,15 +37,29 @@ stages:
             terraform version
           displayName: 'Install & Check Terraform Version'
 
+        - task: AzureCLI@2
+          name: exportCreds
+          inputs:
+            azureSubscription: $(azureSubscription)
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              echo "Exporting Azure credentials..."
+              echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
+              echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId"
+              echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
+              echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+
         - script: terraform init
           workingDirectory: landing-zone
           displayName: 'Terraform Init'
 
-        - script: terraform validate
-          workingDirectory: landing-zone
-          displayName: 'Terraform Validate'
-
-        - script: terraform plan -out=tfplan.out
+        - script: |
+            terraform plan -out=tfplan.out \
+              -var="subscription_id=$(ARM_SUBSCRIPTION_ID)" \
+              -var="client_id=$(ARM_CLIENT_ID)" \
+              -var="client_secret=$(ARM_CLIENT_SECRET)" \
+              -var="tenant_id=$(ARM_TENANT_ID)"
           workingDirectory: landing-zone
           displayName: 'Terraform Plan'
 
@@ -63,14 +77,13 @@ stages:
   jobs:
     - deployment: apply
       displayName: 'Terraform Apply'
-      environment: 'infra-approval'  # Requires manual approval (must be created in Azure DevOps UI)
+      environment: 'infra-approval'
       strategy:
         runOnce:
           deploy:
             steps:
               - download: current
                 artifact: terraformPlan
-                displayName: 'Download Terraform Plan'
 
               - checkout: self
 
@@ -82,11 +95,29 @@ stages:
                   terraform version
                 displayName: 'Install & Check Terraform Version'
 
+              - task: AzureCLI@2
+                name: exportCreds
+                inputs:
+                  azureSubscription: $(azureSubscription)
+                  scriptType: 'bash'
+                  scriptLocation: 'inlineScript'
+                  inlineScript: |
+                    echo "Exporting Azure credentials..."
+                    echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
+                    echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId"
+                    echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
+                    echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+
               - script: terraform init
                 workingDirectory: landing-zone
                 displayName: 'Terraform Init'
 
-              - script: terraform apply -auto-approve tfplan.out
+              - script: |
+                  terraform apply -auto-approve tfplan.out \
+                    -var="subscription_id=$(ARM_SUBSCRIPTION_ID)" \
+                    -var="client_id=$(ARM_CLIENT_ID)" \
+                    -var="client_secret=$(ARM_CLIENT_SECRET)" \
+                    -var="tenant_id=$(ARM_TENANT_ID)"
                 workingDirectory: landing-zone
                 displayName: 'Terraform Apply'
 
@@ -123,7 +154,7 @@ stages:
   jobs:
     - deployment: helmDeploy
       displayName: 'Helm Deploy'
-      environment: 'aks-dev'  # Auto-created on first use if not already existing
+      environment: 'aks-dev'
       strategy:
         runOnce:
           deploy:

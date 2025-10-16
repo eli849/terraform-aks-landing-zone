@@ -48,3 +48,24 @@ variable "kube_cluster_ca_certificate" {
   type = string
   default = ""
 }
+
+variable "subscription_id" {
+  type        = string
+  description = "Azure Subscription ID"
+}
+
+variable "client_id" {
+  type        = string
+  description = "Azure Client ID (Service Principal)"
+}
+
+variable "client_secret" {
+  type        = string
+  sensitive   = true
+  description = "Azure Client Secret (Service Principal)"
+}
+
+variable "tenant_id" {
+  type        = string
+  description = "Azure Tenant ID"
+}
