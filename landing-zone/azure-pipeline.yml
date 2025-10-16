@@ -4,7 +4,7 @@ trigger:
       - main
 
 variables:
-  azureSubscription: 'azureServiceConnection'
+  azureSubscription: 'azureServiceConnection'  # <-- your service connection name
   aksClusterName: 'aks-cluster'
   aksResourceGroup: 'rg-landing-zone'
   acrName: 'myacr'
@@ -29,6 +29,7 @@ stages:
       steps:
         - checkout: self
 
+        # Install Terraform
         - script: |
             echo "Installing Terraform..."
             curl -s -o terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
@@ -37,6 +38,7 @@ stages:
             terraform version
           displayName: 'Install & Check Terraform Version'
 
+        # Export credentials from Azure DevOps service connection
         - task: AzureCLI@2
           name: exportCreds
           inputs:
@@ -44,15 +46,24 @@ stages:
             scriptType: 'bash'
             scriptLocation: 'inlineScript'
             inlineScript: |
-              echo "Exporting Azure credentials..."
-              echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
-              echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId"
-              echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
-              echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+              echo "Exporting Terraform credentials..."
+              export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+              export ARM_TENANT_ID=$(az account show --query tenantId -o tsv)
+              export ARM_CLIENT_ID=$servicePrincipalId
+              export ARM_CLIENT_SECRET=$servicePrincipalKey
+
+              echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$ARM_SUBSCRIPTION_ID"
+              echo "##vso[task.setvariable variable=ARM_TENANT_ID]$ARM_TENANT_ID"
+              echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$ARM_CLIENT_ID"
+              echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$ARM_CLIENT_SECRET"
 
         - script: terraform init
           workingDirectory: landing-zone
           displayName: 'Terraform Init'
+
+        - script: terraform validate
+          workingDirectory: landing-zone
+          displayName: 'Terraform Validate'
 
         - script: |
             terraform plan -out=tfplan.out \
@@ -84,6 +95,7 @@ stages:
             steps:
               - download: current
                 artifact: terraformPlan
+                displayName: 'Download Terraform Plan'
 
               - checkout: self
 
@@ -96,17 +108,22 @@ stages:
                 displayName: 'Install & Check Terraform Version'
 
               - task: AzureCLI@2
-                name: exportCreds
+                name: exportCredsApply
                 inputs:
                   azureSubscription: $(azureSubscription)
                   scriptType: 'bash'
                   scriptLocation: 'inlineScript'
                   inlineScript: |
-                    echo "Exporting Azure credentials..."
-                    echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
-                    echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId"
-                    echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
-                    echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+                    echo "Exporting Terraform credentials..."
+                    export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+                    export ARM_TENANT_ID=$(az account show --query tenantId -o tsv)
+                    export ARM_CLIENT_ID=$servicePrincipalId
+                    export ARM_CLIENT_SECRET=$servicePrincipalKey
+
+                    echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$ARM_SUBSCRIPTION_ID"
+                    echo "##vso[task.setvariable variable=ARM_TENANT_ID]$ARM_TENANT_ID"
+                    echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$ARM_CLIENT_ID"
+                    echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$ARM_CLIENT_SECRET"
 
               - script: terraform init
                 workingDirectory: landing-zone
@@ -132,7 +149,6 @@ stages:
       displayName: 'Docker Build & Push'
       pool:
         vmImage: 'ubuntu-latest'
-
       steps:
         - checkout: self
 
@@ -187,7 +203,6 @@ stages:
       displayName: 'Verify Prometheus/Grafana Pods'
       pool:
         vmImage: 'ubuntu-latest'
-
       steps:
         - task: AzureCLI@2
           inputs:
