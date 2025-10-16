@@ -4,7 +4,7 @@ trigger:
       - main
 
 variables:
-  azureSubscription: 'azure-devops-terraform-oidc'   # ✅ Use your OIDC-enabled service connection name
+  azureSubscription: 'azureServiceConnection'   # ✅ Use your OIDC-enabled service connection name
   aksClusterName: 'aks-cluster'
   aksResourceGroup: 'rg-landing-zone'
   acrName: 'myacr'
