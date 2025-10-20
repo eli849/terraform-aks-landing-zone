@@ -4,7 +4,7 @@ trigger:
       - main
 
 variables:
-  azureSubscription: 'azureServiceConnection'   # ✅ Use your OIDC-enabled service connection name
+  azureSubscription: 'azureServiceConnection'   # ✅ OIDC-enabled service connection
   aksClusterName: 'aks-cluster'
   aksResourceGroup: 'rg-landing-zone'
   acrName: 'myacr'
@@ -31,13 +31,17 @@ stages:
         - checkout: self
 
         - task: AzureCLI@2
-          name: terraformLogin
+          name: setTerraformEnvVars
           inputs:
             azureSubscription: $(azureSubscription)
             scriptType: bash
             scriptLocation: inlineScript
             inlineScript: |
-              echo "Logged in using OIDC service connection."
+              echo "Fetching ARM_* variables via OIDC login..."
+              echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$(az account show --query user.name -o tsv)"
+              echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
+              echo "##vso[task.setvariable variable=ARM_TENANT_ID]$(az account show --query tenantId -o tsv)"
+              echo "##vso[task.setvariable variable=ARM_USE_OIDC]true"
 
         - script: |
             curl -s -o terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
@@ -49,14 +53,29 @@ stages:
         - script: terraform init
           workingDirectory: landing-zone
           displayName: 'Terraform Init'
+          env:
+            ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+            ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+            ARM_TENANT_ID: $(ARM_TENANT_ID)
+            ARM_USE_OIDC: true
 
         - script: terraform validate
           workingDirectory: landing-zone
           displayName: 'Terraform Validate'
+          env:
+            ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+            ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+            ARM_TENANT_ID: $(ARM_TENANT_ID)
+            ARM_USE_OIDC: true
 
         - script: terraform plan -out=tfplan.out
           workingDirectory: landing-zone
           displayName: 'Terraform Plan'
+          env:
+            ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+            ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+            ARM_TENANT_ID: $(ARM_TENANT_ID)
+            ARM_USE_OIDC: true
 
         - publish: landing-zone/tfplan.out
           artifact: terraformPlan
@@ -84,13 +103,17 @@ stages:
               - checkout: self
 
               - task: AzureCLI@2
-                name: terraformLogin
+                name: setTerraformEnvVars
                 inputs:
                   azureSubscription: $(azureSubscription)
                   scriptType: bash
                   scriptLocation: inlineScript
                   inlineScript: |
-                    echo "Logged in using OIDC service connection."
+                    echo "Fetching ARM_* variables via OIDC login..."
+                    echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$(az account show --query user.name -o tsv)"
+                    echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
+                    echo "##vso[task.setvariable variable=ARM_TENANT_ID]$(az account show --query tenantId -o tsv)"
+                    echo "##vso[task.setvariable variable=ARM_USE_OIDC]true"
 
               - script: |
                   curl -s -o terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
@@ -102,10 +125,20 @@ stages:
               - script: terraform init
                 workingDirectory: landing-zone
                 displayName: 'Terraform Init'
+                env:
+                  ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+                  ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+                  ARM_TENANT_ID: $(ARM_TENANT_ID)
+                  ARM_USE_OIDC: true
 
               - script: terraform apply -auto-approve tfplan.out
                 workingDirectory: landing-zone
                 displayName: 'Terraform Apply'
+                env:
+                  ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+                  ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+                  ARM_TENANT_ID: $(ARM_TENANT_ID)
+                  ARM_USE_OIDC: true
 
 # ===============================
 # 3. CI: Build and Push Docker Image
@@ -192,3 +225,4 @@ stages:
               else
                 echo "Prometheus and Grafana pods are running successfully."
               fi
+
