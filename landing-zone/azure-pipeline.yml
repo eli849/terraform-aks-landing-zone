@@ -4,7 +4,7 @@ trigger:
       - main
 
 variables:
-  azureSubscription: 'azureServiceConnection'   # ✅ OIDC-enabled service connection
+  azureSubscription: 'azureServiceConnection'   # OIDC-enabled Azure service connection name
   aksClusterName: 'aks-cluster'
   aksResourceGroup: 'rg-landing-zone'
   acrName: 'myacr'
@@ -16,213 +16,240 @@ variables:
 
 stages:
 
-# ===============================
-# 1. CI: Terraform Plan
-# ===============================
-- stage: terraform
-  displayName: 'CI – Terraform Plan'
-  jobs:
-    - job: terraform
-      displayName: 'Run Terraform Plan'
-      pool:
-        vmImage: 'ubuntu-latest'
+  # ===============================
+  # 1. CI: Terraform Plan
+  # ===============================
+  - stage: terraform
+    displayName: 'CI – Terraform Plan'
+    jobs:
+      - job: terraform
+        displayName: 'Run Terraform Plan'
+        pool:
+          vmImage: 'ubuntu-latest'
 
-      steps:
-        - checkout: self
+        steps:
+          - checkout: self
 
-        - task: AzureCLI@2
-          name: setTerraformEnvVars
-          inputs:
-            azureSubscription: $(azureSubscription)
-            scriptType: bash
-            scriptLocation: inlineScript
-            inlineScript: |
-              echo "Fetching ARM_* variables via OIDC login..."
-              echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$(az account show --query user.name -o tsv)"
-              echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
-              echo "##vso[task.setvariable variable=ARM_TENANT_ID]$(az account show --query tenantId -o tsv)"
-              echo "##vso[task.setvariable variable=ARM_USE_OIDC]true"
+          # Step: Use AzureCLI@2 with addSpnToEnvironment so we get SPN context (idToken, servicePrincipalId, tenantId)
+          - task: AzureCLI@2
+            name: setTerraformEnvVars
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              inlineScript: |
+                echo "🔐 Inside AzureCLI@2 with federated identity"
+                echo "Environment variables in this task:"
+                env | grep -E 'servicePrincipalId|idToken|tenantId'
+                echo "Setting pipeline variables from SPN context..."
+                echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId"
+                echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+                echo "##vso[task.setvariable variable=ARM_OIDC_TOKEN]$idToken"
+                # subscription ID from az account show
+                subId=$(az account show --query id -o tsv)
+                echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$subId"
+                echo "##vso[task.setvariable variable=ARM_USE_OIDC]true"
 
-        - script: |
-            curl -s -o terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
-            unzip -o terraform.zip
-            sudo mv terraform /usr/local/bin/
-            terraform version
-          displayName: 'Install & Check Terraform Version'
+          # Optional: debug print so you can see in logs what got set
+          - script: |
+              echo "=== After setting pipeline variables ==="
+              echo "ARM_CLIENT_ID = $(ARM_CLIENT_ID)"
+              echo "ARM_TENANT_ID = $(ARM_TENANT_ID)"
+              echo "ARM_SUBSCRIPTION_ID = $(ARM_SUBSCRIPTION_ID)"
+              echo "ARM_OIDC_TOKEN = $(ARM_OIDC_TOKEN)"
+            displayName: "Debug: show ARM_* values"
 
-        - script: terraform init
-          workingDirectory: landing-zone
-          displayName: 'Terraform Init'
-          env:
-            ARM_CLIENT_ID: $(ARM_CLIENT_ID)
-            ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
-            ARM_TENANT_ID: $(ARM_TENANT_ID)
-            ARM_USE_OIDC: true
+          - script: |
+              curl -s -o terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
+              unzip -o terraform.zip
+              sudo mv terraform /usr/local/bin/
+              terraform version
+            displayName: 'Install & Check Terraform Version'
 
-        - script: terraform validate
-          workingDirectory: landing-zone
-          displayName: 'Terraform Validate'
-          env:
-            ARM_CLIENT_ID: $(ARM_CLIENT_ID)
-            ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
-            ARM_TENANT_ID: $(ARM_TENANT_ID)
-            ARM_USE_OIDC: true
+          - script: terraform init
+            workingDirectory: landing-zone
+            displayName: 'Terraform Init'
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_USE_OIDC: true
+              ARM_OIDC_TOKEN: $(ARM_OIDC_TOKEN)
 
-        - script: terraform plan -out=tfplan.out
-          workingDirectory: landing-zone
-          displayName: 'Terraform Plan'
-          env:
-            ARM_CLIENT_ID: $(ARM_CLIENT_ID)
-            ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
-            ARM_TENANT_ID: $(ARM_TENANT_ID)
-            ARM_USE_OIDC: true
+          - script: terraform validate
+            workingDirectory: landing-zone
+            displayName: 'Terraform Validate'
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_USE_OIDC: true
+              ARM_OIDC_TOKEN: $(ARM_OIDC_TOKEN)
 
-        - publish: landing-zone/tfplan.out
-          artifact: terraformPlan
-          displayName: 'Publish Terraform Plan Artifact'
+          - script: terraform plan -out=tfplan.out
+            workingDirectory: landing-zone
+            displayName: 'Terraform Plan'
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_USE_OIDC: true
+              ARM_OIDC_TOKEN: $(ARM_OIDC_TOKEN)
 
-# ===============================
-# 2. CD: Terraform Apply (Manual Approval)
-# ===============================
-- stage: terraform_apply
-  displayName: 'CD – Apply Terraform Plan'
-  dependsOn: terraform
-  condition: succeeded()
-  jobs:
-    - deployment: apply
-      displayName: 'Terraform Apply'
-      environment: 'infra-approval'
-      strategy:
-        runOnce:
-          deploy:
-            steps:
-              - download: current
-                artifact: terraformPlan
-                displayName: 'Download Terraform Plan'
+          - publish: landing-zone/tfplan.out
+            artifact: terraformPlan
+            displayName: 'Publish Terraform Plan Artifact'
 
-              - checkout: self
+  # ===============================
+  # 2. CD: Terraform Apply (Manual Approval)
+  # ===============================
+  - stage: terraform_apply
+    displayName: 'CD – Apply Terraform Plan'
+    dependsOn: terraform
+    condition: succeeded()
+    jobs:
+      - deployment: apply
+        displayName: 'Terraform Apply'
+        environment: 'infra-approval'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: terraformPlan
+                  displayName: 'Download Terraform Plan'
 
-              - task: AzureCLI@2
-                name: setTerraformEnvVars
-                inputs:
-                  azureSubscription: $(azureSubscription)
-                  scriptType: bash
-                  scriptLocation: inlineScript
-                  inlineScript: |
-                    echo "Fetching ARM_* variables via OIDC login..."
-                    echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$(az account show --query user.name -o tsv)"
-                    echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
-                    echo "##vso[task.setvariable variable=ARM_TENANT_ID]$(az account show --query tenantId -o tsv)"
-                    echo "##vso[task.setvariable variable=ARM_USE_OIDC]true"
+                - checkout: self
 
-              - script: |
-                  curl -s -o terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
-                  unzip -o terraform.zip
-                  sudo mv terraform /usr/local/bin/
-                  terraform version
-                displayName: 'Install & Check Terraform Version'
+                # Set environment variables again in this stage
+                - task: AzureCLI@2
+                  name: setTerraformEnvVarsApply
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      echo "🔐 Inside Apply stage AzureCLI@2"
+                      env | grep -E 'servicePrincipalId|idToken|tenantId'
+                      echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId"
+                      echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+                      echo "##vso[task.setvariable variable=ARM_OIDC_TOKEN]$idToken"
+                      subId=$(az account show --query id -o tsv)
+                      echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$subId"
+                      echo "##vso[task.setvariable variable=ARM_USE_OIDC]true"
 
-              - script: terraform init
-                workingDirectory: landing-zone
-                displayName: 'Terraform Init'
-                env:
-                  ARM_CLIENT_ID: $(ARM_CLIENT_ID)
-                  ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
-                  ARM_TENANT_ID: $(ARM_TENANT_ID)
-                  ARM_USE_OIDC: true
+                - script: |
+                    curl -s -o terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
+                    unzip -o terraform.zip
+                    sudo mv terraform /usr/local/bin/
+                    terraform version
+                  displayName: 'Install & Check Terraform Version'
 
-              - script: terraform apply -auto-approve tfplan.out
-                workingDirectory: landing-zone
-                displayName: 'Terraform Apply'
-                env:
-                  ARM_CLIENT_ID: $(ARM_CLIENT_ID)
-                  ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
-                  ARM_TENANT_ID: $(ARM_TENANT_ID)
-                  ARM_USE_OIDC: true
+                - script: terraform init
+                  workingDirectory: landing-zone
+                  displayName: 'Terraform Init'
+                  env:
+                    ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+                    ARM_TENANT_ID: $(ARM_TENANT_ID)
+                    ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+                    ARM_USE_OIDC: true
+                    ARM_OIDC_TOKEN: $(ARM_OIDC_TOKEN)
 
-# ===============================
-# 3. CI: Build and Push Docker Image
-# ===============================
-- stage: build
-  displayName: 'CI – Build & Push Docker Image'
-  dependsOn: terraform_apply
-  jobs:
-    - job: docker
-      displayName: 'Docker Build & Push'
-      pool:
-        vmImage: 'ubuntu-latest'
+                - script: terraform apply -auto-approve tfplan.out
+                  workingDirectory: landing-zone
+                  displayName: 'Terraform Apply'
+                  env:
+                    ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+                    ARM_TENANT_ID: $(ARM_TENANT_ID)
+                    ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+                    ARM_USE_OIDC: true
+                    ARM_OIDC_TOKEN: $(ARM_OIDC_TOKEN)
 
-      steps:
-        - checkout: self
+  # ===============================
+  # 3. CI: Build and Push Docker Image
+  # ===============================
+  - stage: build
+    displayName: 'CI – Build & Push Docker Image'
+    dependsOn: terraform_apply
+    jobs:
+      - job: docker
+        displayName: 'Docker Build & Push'
+        pool:
+          vmImage: 'ubuntu-latest'
 
-        - task: AzureCLI@2
-          inputs:
-            azureSubscription: $(azureSubscription)
-            scriptType: 'bash'
-            scriptLocation: 'inlineScript'
-            inlineScript: |
-              docker build -t $(containerRegistry)/$(imageName):$(Build.BuildId) .
-              docker push $(containerRegistry)/$(imageName):$(Build.BuildId)
+        steps:
+          - checkout: self
 
-# ===============================
-# 4. CD: Deploy to AKS using Helm
-# ===============================
-- stage: deploy
-  displayName: 'CD – Deploy to AKS with Helm'
-  dependsOn: build
-  jobs:
-    - deployment: helmDeploy
-      displayName: 'Helm Deploy'
-      environment: 'aks-dev'
-      strategy:
-        runOnce:
-          deploy:
-            steps:
-              - checkout: self
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                docker build -t $(containerRegistry)/$(imageName):$(Build.BuildId) .
+                docker push $(containerRegistry)/$(imageName):$(Build.BuildId)
 
-              - task: AzureCLI@2
-                inputs:
-                  azureSubscription: $(azureSubscription)
-                  scriptType: 'bash'
-                  scriptLocation: 'inlineScript'
-                  inlineScript: |
-                    echo "Getting AKS credentials..."
-                    az aks get-credentials --name $(aksClusterName) --resource-group $(aksResourceGroup) --overwrite-existing
+  # ===============================
+  # 4. CD: Deploy to AKS using Helm
+  # ===============================
+  - stage: deploy
+    displayName: 'CD – Deploy to AKS with Helm'
+    dependsOn: build
+    jobs:
+      - deployment: helmDeploy
+        displayName: 'Helm Deploy'
+        environment: 'aks-dev'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
 
-                    echo "Deploying with Helm..."
-                    helm lint $(helmChartPath)
-                    helm upgrade --install $(helmReleaseName) $(helmChartPath) \
-                      --set image.repository=$(containerRegistry)/$(imageName) \
-                      --set image.tag=$(Build.BuildId)
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      echo "Getting AKS credentials..."
+                      az aks get-credentials --name $(aksClusterName) --resource-group $(aksResourceGroup) --overwrite-existing
 
-# ===============================
-# 5. CD: Post-deploy Monitoring Check
-# ===============================
-- stage: monitor
-  displayName: 'CD – Post-deploy Monitoring Check'
-  dependsOn: deploy
-  jobs:
-    - job: verify
-      displayName: 'Verify Prometheus/Grafana Pods'
-      pool:
-        vmImage: 'ubuntu-latest'
+                      echo "Deploying with Helm..."
+                      helm lint $(helmChartPath)
+                      helm upgrade --install $(helmReleaseName) $(helmChartPath) \
+                        --set image.repository=$(containerRegistry)/$(imageName) \
+                        --set image.tag=$(Build.BuildId)
 
-      steps:
-        - task: AzureCLI@2
-          inputs:
-            azureSubscription: $(azureSubscription)
-            scriptType: 'bash'
-            scriptLocation: 'inlineScript'
-            inlineScript: |
-              echo "Checking Prometheus & Grafana health..."
-              az aks get-credentials --name $(aksClusterName) --resource-group $(aksResourceGroup) --overwrite-existing
+  # ===============================
+  # 5. CD: Post-deploy Monitoring Check
+  # ===============================
+  - stage: monitor
+    displayName: 'CD – Post-deploy Monitoring Check'
+    dependsOn: deploy
+    jobs:
+      - job: verify
+        displayName: 'Verify Prometheus/Grafana Pods'
+        pool:
+          vmImage: 'ubuntu-latest'
 
-              kubectl get pods -n default | grep prometheus
-              kubectl get pods -n default | grep grafana
-              if [ $? -ne 0 ]; then
-                echo "Prometheus or Grafana pods are not running!"
-                exit 1
-              else
-                echo "Prometheus and Grafana pods are running successfully."
-              fi
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Checking Prometheus & Grafana health..."
+                az aks get-credentials --name $(aksClusterName) --resource-group $(aksResourceGroup) --overwrite-existing
+
+                kubectl get pods -n default | grep prometheus
+                kubectl get pods -n default | grep grafana
+                if [ $? -ne 0 ]; then
+                  echo "Prometheus or Grafana pods are not running!"
+                  exit 1
+                else
+                  echo "Prometheus and Grafana pods are running successfully."
+                fi
 
