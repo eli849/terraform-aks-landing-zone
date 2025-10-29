@@ -1,13 +1,13 @@
 resource "azurerm_kubernetes_cluster" "aks" {
-  name                = "aks-cluster"
+  name                = var.cluster_name
   location            = var.location
   resource_group_name = var.rg_name
-  dns_prefix          = "aksdemo"
+  dns_prefix          = var.dns_prefix
 
   default_node_pool {
-    name       = "system"
-    node_count = 2
-    vm_size    = "Standard_DS2_v2"
+    name           = "system"
+    node_count     = var.node_count
+    vm_size        = var.vm_size
     vnet_subnet_id = var.vnet_subnet_id
   }
 

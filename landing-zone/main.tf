@@ -35,6 +35,10 @@ module "aks" {
   vnet_subnet_id = module.network.subnet_id
   sp_app_id      = module.service_principal.app_id
   sp_secret      = module.service_principal.password
+  cluster_name   = var.aks_cluster_name
+  dns_prefix     = var.aks_dns_prefix
+  node_count     = var.node_count
+  vm_size        = var.vm_size
 }
 
 module "acr" {

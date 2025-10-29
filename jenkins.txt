@@ -1,0 +1,111 @@
+pipeline {
+    agent any
+
+    environment {
+        AZURE_SUBSCRIPTION = 'your-azure-service-connection'  // Jenkins credential ID or env var
+        AKS_CLUSTER_NAME = 'aks-cluster'
+        AKS_RESOURCE_GROUP = 'rg-landing-zone'
+        CONTAINER_REGISTRY = 'myacr.azurecr.io'
+        IMAGE_NAME = 'myapp'
+        HELM_RELEASE_NAME = 'myapp'
+        HELM_CHART_PATH = './helm/myapp-chart'
+        KEY_VAULT_NAME = 'rg-landing-zone-kv'
+    }
+
+    stages {
+        stage('Terraform Plan') {
+            steps {
+                script {
+                    sh 'terraform --version'
+                    sh 'terraform init'
+                    sh 'terraform validate'
+                    sh 'terraform plan -out=tfplan'
+                }
+                archiveArtifacts artifacts: 'tfplan', fingerprint: true
+            }
+        }
+
+        stage('Terraform Apply') {
+            steps {
+                input message: 'Approve Terraform Apply?', ok: 'Apply'
+                script {
+                    sh 'terraform init'
+                    sh 'terraform apply -auto-approve tfplan'
+                }
+            }
+        }
+
+        stage('Build and Push Docker Image') {
+            steps {
+                checkout scm
+                script {
+                    withAzureCLI(credentialsId: AZURE_SUBSCRIPTION) {
+                        sh """
+                            az acr login --name ${CONTAINER_REGISTRY}
+                            docker build -t ${CONTAINER_REGISTRY}/${IMAGE_NAME}:\${BUILD_NUMBER} .
+                            docker push ${CONTAINER_REGISTRY}/${IMAGE_NAME}:\${BUILD_NUMBER}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to AKS with Helm') {
+            steps {
+                checkout scm
+                script {
+                    withAzureCLI(credentialsId: AZURE_SUBSCRIPTION) {
+                        sh """
+                            az aks get-credentials --name ${AKS_CLUSTER_NAME} --resource-group ${AKS_RESOURCE_GROUP} --overwrite-existing
+                            helm upgrade --install ${HELM_RELEASE_NAME} ${HELM_CHART_PATH} \\
+                              --set image.repository=${CONTAINER_REGISTRY}/${IMAGE_NAME} \\
+                              --set image.tag=\${BUILD_NUMBER}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Post-deploy Monitoring Check') {
+            steps {
+                script {
+                    withAzureCLI(credentialsId: AZURE_SUBSCRIPTION) {
+                        sh """
+                            az aks get-credentials --name ${AKS_CLUSTER_NAME} --resource-group ${AKS_RESOURCE_GROUP} --overwrite-existing
+                            kubectl get pods -n default | grep prometheus
+                            kubectl get pods -n default | grep grafana
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully.'
+        }
+        failure {
+            echo 'Pipeline failed.'
+        }
+    }
+}
+
+
+What You Need to Set Up in Jenkins
+
+Install Terraform on Jenkins agents.
+
+Install Azure CLI and Helm on Jenkins agents.
+
+Install Azure CLI Jenkins plugin (for withAzureCLI).
+
+Add Azure service principal credentials to Jenkins Credentials (as a Service Principal).
+
+Jenkins agents must have Docker installed for the build/push stage.
+
+Jenkins agents must have kubectl and helm installed for deploy and monitoring.
+
+Notes:
+
+This pipeline assumes your Terraform backend is already configured (e.g., Azure Storage backend).

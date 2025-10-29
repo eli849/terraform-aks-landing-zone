@@ -28,6 +28,36 @@ variable "subnet_cidr" {
   default     = ["10.0.1.0/24"]
 }
 
+variable "environment" {
+  description = "Environment name (dev, test, prod)"
+  type        = string
+  default     = "dev"
+}
+
+variable "aks_cluster_name" {
+  description = "AKS cluster name"
+  type        = string
+  default     = "aks-cluster"
+}
+
+variable "aks_dns_prefix" {
+  description = "DNS prefix for AKS cluster"
+  type        = string
+  default     = "aks"
+}
+
+variable "node_count" {
+  description = "Number of nodes in the default node pool"
+  type        = number
+  default     = 2
+}
+
+variable "vm_size" {
+  description = "VM size for AKS nodes"
+  type        = string
+  default     = "Standard_D2s_v3"
+}
+
 # AKS kubeconfig pieces (populated from module output)
 variable "kube_host" {
   type = string
